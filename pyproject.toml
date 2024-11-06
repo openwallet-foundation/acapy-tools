@@ -30,7 +30,7 @@ PyNaCl = "~=1.4"
 pydantic = "^2.8.2"
 
 [tool.poetry.group.dev.dependencies]
-black = "<24.4.0"
+black = "<24.11.0"
 flake8 = "<6.0.0"
 pytest = "<7.5.0"
 pytest-asyncio = "<0.20.3"
