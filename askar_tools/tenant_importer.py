@@ -1,7 +1,7 @@
 """This module contains the Tenant Importer class."""
 
-import time
 import uuid
+from datetime import datetime,timezone
 
 from aries_askar import Store
 
@@ -147,14 +147,14 @@ class TenantImporter:
                 category="forward_route",
                 name=str(uuid.uuid4()),
                 value_json={
-                    "recipient_key": connection.value_json["invitation_key"],
+                    "recipient_key": connection.value_json["invitation_key"] if "invitation_key" in connection.value_json else "",
                     "wallet_id": wallet_id,
                     "created_at": current_time,
                     "updated_at": current_time,
                     "connection_id": None,
                 },
                 tags={
-                    "recipient_key": connection.value_json["invitation_key"],
+                    "recipient_key": connection.value_json["invitation_key"] if "invitation_key" in connection.value_json else "",
                     "role": "server",
                     "wallet_id": wallet_id,
                 },
@@ -217,7 +217,8 @@ class TenantImporter:
             )
             async with admin_store.transaction() as admin_txn:
                 wallet_id = str(uuid.uuid4())
-                current_time = time.time()
+                utc_time = datetime.now(timezone.utc)
+                current_time = utc_time.replace(tzinfo=None).isoformat(timespec='microseconds') + "Z"
                 await self._create_tenant(
                     wallet_id=wallet_id,
                     admin_txn=admin_txn,
