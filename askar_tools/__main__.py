@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from askar_tools.error import InvalidArgumentsError
 from askar_tools.exporter import Exporter
+from askar_tools.mediator_converter import MediatorConverter
 from askar_tools.multi_wallet_converter import MultiWalletConverter
 from askar_tools.pg_connection import PgConnection
 from askar_tools.sqlite_connection import SqliteConnection
@@ -22,7 +23,7 @@ def config():
     parser.add_argument(
         "--strategy",
         required=True,
-        choices=["export", "mt-convert-to-mw", "tenant-import"],
+        choices=["export", "mt-convert-to-mw", "tenant-import", "mediator-convert"],
         help=(
             "Specify migration strategy depending on database type, wallet "
             "management mode, and agent type."
@@ -214,6 +215,13 @@ async def main(args):
                 tenant_extra_settings=args.tenant_extra_settings,
                 tenant_dispatch_type=args.tenant_dispatch_type,
             ),
+        )
+    elif args.strategy == "mediator-convert":
+        await conn.connect()
+        method = MediatorConverter(
+            conn=conn,
+            wallet_name=args.wallet_name,
+            wallet_key=args.wallet_key,
         )
     else:
         raise InvalidArgumentsError("Invalid strategy")
