@@ -13,6 +13,9 @@ from aries_askar import Store
 from .pg_connection import PgConnection
 from .sqlite_connection import SqliteConnection
 
+MULTICODEC_PREFIX_SHA2_256 = b'\x12\x20'
+MULTICODEC_ED25519_PREFIX_BYTE_1 = 0xED  
+MULTICODEC_ED25519_PREFIX_BYTE_2 = 0x01  
 
 class MediatorConverter:
     """The MediatorConverter class."""
@@ -36,7 +39,7 @@ class MediatorConverter:
 
     def _verkey_to_did_key_fingerprint(self, verkey: str) -> str:
         """Convert base58 verkey to did:key fingerprint using multicodec for ed25519."""
-        multicodec_prefix = bytes([0xED, 0x01])
+        multicodec_prefix = bytes([MULTICODEC_ED25519_PREFIX_BYTE_1, MULTICODEC_ED25519_PREFIX_BYTE_2])
         key_bytes = base58.b58decode(verkey)
         return "z" + base58.b58encode(multicodec_prefix + key_bytes).decode("utf-8")
 
@@ -49,7 +52,7 @@ class MediatorConverter:
         digest = hashlib.sha256(canonical_doc.encode("utf-8")).digest()
         
         # Prepend multicodec for sha2-256 (0x12 0x20)
-        multicodec_prefixed = b'\x12\x20' + digest
+        multicodec_prefixed = MULTICODEC_PREFIX_SHA2_256 + digest
 
         # Multibase encode using base58btc (same as Credo TS)
         mb_encoded = multibase.encode("base58btc", multicodec_prefixed).decode("utf-8")
@@ -198,6 +201,7 @@ class MediatorConverter:
         entry = routing_did_entries[0]
         verkey = entry["value"]["verkey"]
         
+        # Find the did record that matches the routing_did
         did_record = None
         for entry_did in items.get("did", []):
             if entry_did.get("value", {}).get("did") == entry["tags"]["did"]:
@@ -206,11 +210,7 @@ class MediatorConverter:
 
         # Create timestamp
         now = datetime.now().isoformat() + "Z"
-
         routing_did_peer = await self._convert_did_to_legacy_did_record(did_record, "created")
-        
-        print("Routing DID Peer:")
-        print(routing_did_peer)
 
         # Build Credo MediatorRoutingRecord
         return {
@@ -275,9 +275,7 @@ class MediatorConverter:
         state = conn["state"]
         created_at = conn.get("created_at") or datetime.now().isoformat() + "Z"
         updated_at = conn.get("updated_at") or created_at
-        thread_id = str(
-            uuid.uuid4()
-        )  # Or pull from connection protocol data if available
+        thread_id = str(uuid.uuid4())  
 
         # AcaPy 'active' maps to Credo 'completed'
         credo_state = "completed" if state == "active" else state
@@ -428,7 +426,6 @@ class MediatorConverter:
         store = await Store.open(self.conn.uri, pass_key=self.wallet_key)
         # Copy it to the individual wallet db
         items = await self._get_decoded_items_and_tags(store)
-        # print("Converting routing_did to MediatorRoutingRecord...")
         did_records = []
         mediator_routing_record, routing_did_peer = (
             await self._convert_routing_did_to_mediator_routing_record(items=items)
