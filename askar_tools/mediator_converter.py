@@ -14,8 +14,7 @@ from .pg_connection import PgConnection
 from .sqlite_connection import SqliteConnection
 
 MULTICODEC_PREFIX_SHA2_256 = b'\x12\x20'
-MULTICODEC_ED25519_PREFIX_BYTE_1 = 0xED  
-MULTICODEC_ED25519_PREFIX_BYTE_2 = 0x01  
+MULTICODEC_ED25519_PREFIX = bytes([0xED, 0x01])
 
 class MediatorConverter:
     """The MediatorConverter class."""
@@ -39,9 +38,10 @@ class MediatorConverter:
 
     def _verkey_to_did_key_fingerprint(self, verkey: str) -> str:
         """Convert base58 verkey to did:key fingerprint using multicodec for ed25519."""
-        multicodec_prefix = bytes([MULTICODEC_ED25519_PREFIX_BYTE_1, MULTICODEC_ED25519_PREFIX_BYTE_2])
         key_bytes = base58.b58decode(verkey)
-        return "z" + base58.b58encode(multicodec_prefix + key_bytes).decode("utf-8")
+        fingerprint_bytes = MULTICODEC_ED25519_PREFIX + key_bytes
+        fingerprint_b58 = base58.b58encode(fingerprint_bytes).decode("utf-8")
+        return f"z{fingerprint_b58}"
 
     def did_peer_from_did_document(self, canonical_doc: str) -> str:
         """Generate a did:peer using NumAlgo 1 from a DID Document (must be deterministic).
@@ -333,6 +333,7 @@ class MediatorConverter:
         connection_id = tags.get("connection_id")
         now = datetime.now().isoformat() + "Z"
         oob_id = str(uuid.uuid4())
+        fingerprint = self._verkey_to_did_key_fingerprint(recipient_key)
 
         # Build inline DIDComm v1 services
         services = [
@@ -382,14 +383,14 @@ class MediatorConverter:
                         "legacyInvitationType": "connections/1.x"
                     }
                 },
-                "_tags": {"recipientKeyFingerprints": [recipient_key]},
+                "_tags": {"recipientKeyFingerprints": [fingerprint]},
             },
             "tags": {
                 "invitationId": thread_id,
                 "threadId": thread_id,
                 "state": "await-response",
                 "role": "sender",
-                f"recipientKeyFingerprints:{recipient_key}": "1",
+                f"recipientKeyFingerprints:{fingerprint}": "1",
             },
         }
 
