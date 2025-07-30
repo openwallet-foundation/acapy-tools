@@ -21,13 +21,14 @@ repository = "https://github.com/hyperledger/aries-acapy-tools.git"
 [tool.poetry.dependencies]
 python = "^3.10"
 aiosqlite = "~=0.17"
-aries-askar = "~=0.3"
+aries-askar = "~=0.4.4"
 asyncpg = "~=0.22"
 base58 = "~=1.0"
 cbor2 = "~=5.2"
 msgpack = "~=1.0"
 PyNaCl = "~=1.4"
 pydantic = "^2.8.2"
+py-multibase = "^1.0.3"
 
 [tool.poetry.group.dev.dependencies]
 black = "<24.4.0"
