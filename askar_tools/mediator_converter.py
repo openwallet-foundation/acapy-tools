@@ -35,6 +35,12 @@ class MediatorConverter:
         self.conn = conn
         self.wallet_name = wallet_name
         self.wallet_key = wallet_key
+        
+    def _truncate_to_milliseconds(self, timestamp: str) -> str:
+        dt = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ")
+        # Round down to milliseconds
+        truncated = dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        return truncated
 
     def _verkey_to_did_key_fingerprint(self, verkey: str) -> str:
         """Convert base58 verkey to did:key fingerprint using multicodec for ed25519."""
@@ -66,7 +72,7 @@ class MediatorConverter:
         unqualified_did = raw_value["did"]
         verkey = raw_value["verkey"]
 
-        now = datetime.now().isoformat() + "Z"
+        now = datetime.now().isoformat(timespec='milliseconds') + "Z"
         fingerprint = self._verkey_to_did_key_fingerprint(verkey)
         _id = str(uuid.uuid4())
 
@@ -209,7 +215,7 @@ class MediatorConverter:
                 break
 
         # Create timestamp
-        now = datetime.now().isoformat() + "Z"
+        now = datetime.now().isoformat(timespec='milliseconds') + "Z"
         routing_did_peer = await self._convert_did_to_legacy_did_record(did_record, "created")
 
         # Build Credo MediatorRoutingRecord
@@ -230,8 +236,8 @@ class MediatorConverter:
         self, entry: dict, connection_id: str
     ) -> dict:
         recipient_key = entry["value"]["recipient_key"]
-        created = entry["value"]["created_at"]
-        updated = entry["value"]["updated_at"]
+        created = self._truncate_to_milliseconds(entry["value"]["created_at"])
+        updated = self._truncate_to_milliseconds(entry["value"]["updated_at"])
         mediation_id = entry["name"]
         thread_id = str(uuid.uuid4())
         return {
@@ -273,9 +279,9 @@ class MediatorConverter:
         their_did_record = await self._convert_did_to_legacy_did_record(their_did, "received")
         their_label = conn.get("their_label", "Unknown")
         state = conn["state"]
-        created_at = conn.get("created_at") or datetime.now().isoformat() + "Z"
-        updated_at = conn.get("updated_at") or created_at
-        thread_id = str(uuid.uuid4())  
+        created_at = self._truncate_to_milliseconds(conn.get("created_at") or datetime.now().isoformat(timespec='milliseconds') + "Z")
+        updated_at = self._truncate_to_milliseconds(conn.get("updated_at") or created_at)
+        thread_id = str(uuid.uuid4())
 
         # AcaPy 'active' maps to Credo 'completed'
         credo_state = "completed" if state == "active" else state
@@ -331,7 +337,7 @@ class MediatorConverter:
         label = val.get("label", "Legacy Agent")
         thread_id = val.get("@id", str(uuid.uuid4()))
         connection_id = tags.get("connection_id")
-        now = datetime.now().isoformat() + "Z"
+        now = datetime.now().isoformat(timespec='milliseconds') + "Z"
         oob_id = str(uuid.uuid4())
         fingerprint = self._verkey_to_did_key_fingerprint(recipient_key)
 
@@ -393,33 +399,6 @@ class MediatorConverter:
                 f"recipientKeyFingerprints:{fingerprint}": "1",
             },
         }
-
-    def _convert_mediation_request_to_mediation_record(
-        self, mediation_request: dict, routing_key: str
-    ) -> dict:
-        """Convert an ACA-Py mediation_requests record to a Credo MediationRecord.
-
-        Args:
-            mediation_request (dict): The ACA-Py mediation_requests wallet record.
-            routing_key (str): The verkey of the routing DID used by the mediator.
-
-        Returns:
-            dict: A Credo-formatted MediationRecord wallet entry.
-        """
-
-        # Construct value
-        now = datetime.now().isoformat() + "Z"
-        record_value = {
-            "id": "MEDIATOR_ROUTING_RECORD",
-            "createdAt": now,
-            "updatedAt": now,
-            "routingKeys": [routing_key],
-            "metadata": {},
-            "_tags": {},
-        }
-
-        # Final wallet record format
-        return {"value": record_value}
 
     async def convert(self):
         """Convert an acapy mediator to a credo mediator."""
@@ -537,8 +516,8 @@ class MediatorConverter:
                 name="STORAGE_VERSION_RECORD_ID",
                 value=json.dumps(
                     {
-                        "createdAt": datetime.now().isoformat() + "Z",
-                        "updatedAt": datetime.now().isoformat() + "Z",
+                        "createdAt": datetime.now().isoformat(timespec='milliseconds') + "Z",
+                        "updatedAt": datetime.now().isoformat(timespec='milliseconds') + "Z",
                         "storageVersion": "0.5",
                         "_tags": {},
                         "metadata": {},
@@ -568,6 +547,9 @@ class MediatorConverter:
             await txn.commit()
         current_name = await store.get_default_profile()
         print(f"acapy current profile name is {current_name}")
+        # 'mediator' is the hardcoded name for the Credo mediator profile
+        # if the credo mediator wallet name is required to be different,
+        # this should be passed as an argument to the constructor
         await store.rename_profile(current_name, "mediator")
         print("Renamed profile to 'mediator'.")
         await store.set_default_profile("mediator")
