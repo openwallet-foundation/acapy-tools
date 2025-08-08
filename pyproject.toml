@@ -29,6 +29,7 @@ msgpack = "~=1.0"
 PyNaCl = "~=1.4"
 pydantic = "^2.8.2"
 py-multibase = "^1.0.3"
+orjson = "^3.11.1"
 
 [tool.poetry.group.dev.dependencies]
 black = "<24.4.0"

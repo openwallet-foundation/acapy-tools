@@ -1,13 +1,13 @@
 """This module contains the MediatorConverter class."""
 
 import hashlib
-import json
 import uuid
 from datetime import datetime
 from json import JSONDecodeError
 
 import base58
 import multibase
+import orjson
 from aries_askar import Store
 
 from .pg_connection import PgConnection
@@ -35,9 +35,13 @@ class MediatorConverter:
         self.conn = conn
         self.wallet_name = wallet_name
         self.wallet_key = wallet_key
+        self.now = datetime.now().isoformat(timespec='milliseconds') + "Z"
         
     def _truncate_to_milliseconds(self, timestamp: str) -> str:
-        dt = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ")
+        try:
+            dt = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ")
+        except ValueError:
+            dt = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
         # Round down to milliseconds
         truncated = dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         return truncated
@@ -49,13 +53,13 @@ class MediatorConverter:
         fingerprint_b58 = base58.b58encode(fingerprint_bytes).decode("utf-8")
         return f"z{fingerprint_b58}"
 
-    def did_peer_from_did_document(self, canonical_doc: str) -> str:
+    def did_peer_from_did_document(self, canonical_doc: bytes) -> str:
         """Generate a did:peer using NumAlgo 1 from a DID Document (must be deterministic).
         Equivalent to Credo TS's DidPeer.fromDidDocument.
         """  # noqa: D205
 
         # SHA-256 hash of canonical JSON
-        digest = hashlib.sha256(canonical_doc.encode("utf-8")).digest()
+        digest = hashlib.sha256(canonical_doc).digest()
         
         # Prepend multicodec for sha2-256 (0x12 0x20)
         multicodec_prefixed = MULTICODEC_PREFIX_SHA2_256 + digest
@@ -72,11 +76,10 @@ class MediatorConverter:
         unqualified_did = raw_value["did"]
         verkey = raw_value["verkey"]
 
-        now = datetime.now().isoformat(timespec='milliseconds') + "Z"
         fingerprint = self._verkey_to_did_key_fingerprint(verkey)
         _id = str(uuid.uuid4())
 
-        legacy_did_doc = json.dumps(
+        legacy_did_doc = orjson.dumps(
             {
                 "@context": "https://w3id.org/did/v1",
                 "publicKey": [
@@ -112,7 +115,7 @@ class MediatorConverter:
                     }
                 ],
                 "id": unqualified_did,
-            }, separators=(",", ":"), sort_keys=True
+            }
         )
         
         did_peer = self.did_peer_from_did_document(legacy_did_doc)
@@ -156,13 +159,13 @@ class MediatorConverter:
                 "id": _id,
                 "did": did_peer,
                 "role": role,
-                "createdAt": now,
-                "updatedAt": now,
+                "createdAt": self.now,
+                "updatedAt": self.now,
                 "didDocument": did_doc,
                 "metadata": {
                     "_internal/legacyDid": {
                         "unqualifiedDid": unqualified_did,
-                        "didDocumentString": legacy_did_doc,
+                        "didDocumentString": orjson.loads(legacy_did_doc),
                     }
                 },
                 "_tags": {},
@@ -214,8 +217,6 @@ class MediatorConverter:
                 did_record = entry_did
                 break
 
-        # Create timestamp
-        now = datetime.now().isoformat(timespec='milliseconds') + "Z"
         routing_did_peer = await self._convert_did_to_legacy_did_record(did_record, "created")
 
         # Build Credo MediatorRoutingRecord
@@ -223,8 +224,8 @@ class MediatorConverter:
             "name": "MEDIATOR_ROUTING_RECORD",
             "value": {
                 "id": "MEDIATOR_ROUTING_RECORD",
-                "createdAt": now,
-                "updatedAt": now,
+                "createdAt": self.now,
+                "updatedAt": self.now,
                 "routingKeys": [verkey],
                 "metadata": {},
                 "_tags": {},
@@ -279,7 +280,7 @@ class MediatorConverter:
         their_did_record = await self._convert_did_to_legacy_did_record(their_did, "received")
         their_label = conn.get("their_label", "Unknown")
         state = conn["state"]
-        created_at = self._truncate_to_milliseconds(conn.get("created_at") or datetime.now().isoformat(timespec='milliseconds') + "Z")
+        created_at = self._truncate_to_milliseconds(conn.get("created_at") or self.now)
         updated_at = self._truncate_to_milliseconds(conn.get("updated_at") or created_at)
         thread_id = str(uuid.uuid4())
 
@@ -337,7 +338,6 @@ class MediatorConverter:
         label = val.get("label", "Legacy Agent")
         thread_id = val.get("@id", str(uuid.uuid4()))
         connection_id = tags.get("connection_id")
-        now = datetime.now().isoformat(timespec='milliseconds') + "Z"
         oob_id = str(uuid.uuid4())
         fingerprint = self._verkey_to_did_key_fingerprint(recipient_key)
 
@@ -376,8 +376,8 @@ class MediatorConverter:
             "name": oob_id,
             "value": {
                 "id": oob_id,
-                "createdAt": now,
-                "updatedAt": now,
+                "createdAt": self.now,
+                "updatedAt": self.now,
                 "outOfBandInvitation": invitation,
                 "state": "await-response",
                 "role": "sender",
@@ -403,6 +403,7 @@ class MediatorConverter:
     async def convert(self):
         """Convert an acapy mediator to a credo mediator."""
         print("Converting acapy mediator to credo mediator...")
+        start_time = datetime.now()
         store = await Store.open(self.conn.uri, pass_key=self.wallet_key)
         # Copy it to the individual wallet db
         items = await self._get_decoded_items_and_tags(store)
@@ -422,6 +423,17 @@ class MediatorConverter:
 
         print("Converting connection entries to ConnectionRecord...")
         connection_records = []
+        did_by_name = {d["name"]: d for d in items.get("did", [])}
+        did_key_by_did = {
+            d["tags"]["did"]: {
+                "value": {
+                    "did": d["tags"]["did"],
+                    "verkey": d["tags"]["key"],
+                }
+            }
+            for d in items.get("did_key", [])
+        }
+
         for entry_connection in items.get("connection", []):
             my_did, their_did = None, None
             # Multiuse invitation connections may not have DIDs
@@ -430,17 +442,12 @@ class MediatorConverter:
                 or entry_connection["value"].get("their_did") is None
             ):
                 continue
-            for entry_did in items.get("did", []):
-                if entry_did["name"] == entry_connection["value"]["my_did"]:
-                    my_did = entry_did
-            for entry_key in items.get("did_key", []):
-                if entry_key["tags"]["did"] == entry_connection["value"]["their_did"]:
-                    their_did = {
-                        "value": {
-                            "did": entry_key["tags"]["did"],
-                            "verkey": entry_key["tags"]["key"],
-                        }
-                    }
+            my_did = did_by_name.get(entry_connection["value"].get("my_did"))
+            their_did = did_key_by_did.get(entry_connection["value"].get("their_did"))
+            
+            if not my_did or not their_did:
+                continue
+            
             (
                 connection_record,
                 my_did_record,
@@ -461,68 +468,88 @@ class MediatorConverter:
             legacy_oob_records.append(legacy_oob_record)
 
         async with store.transaction() as txn:
+            count = 0
+            
             for record in mediation_records:
+                record["encoded_value"] = orjson.dumps(record["value"])
+            for record in mediation_records:
+                count += 1
                 await txn.insert(
                     category="MediationRecord",
                     name=record["name"],
-                    value=json.dumps(record["value"]).encode("utf-8"),
+                    value=record["encoded_value"],
                     tags=record["tags"],
                 )
-                print(
-                    f"MediationRecord {record['name']} successfully inserted into wallet."
-                )
+            print(
+                f"converted {count} MediationRecords"
+            )
+            
             await txn.insert(
                 category="MediatorRoutingRecord",
                 name="MEDIATOR_ROUTING_RECORD",
-                value=json.dumps(mediator_routing_record["value"]).encode("utf-8"),
+                value=orjson.dumps(mediator_routing_record["value"]),
                 tags={},
             )
             print(
                 "MediationRecord MEDIATOR_ROUTING_RECORD successfully inserted into wallet."
             )
+            
+            count = 0
             for record in did_records:
+                record["encoded_value"] = orjson.dumps(record["value"])
+            for record in did_records:
+                count += 1
                 await txn.insert(
                     category="DidRecord",
                     name=record["name"],
-                    value=json.dumps(record["value"]).encode("utf-8"),
+                    value=record["encoded_value"],
                     tags=record["tags"],
                 )
-                print(f"DidRecord {record['name']} successfully inserted into wallet.")
+            print(f"converted {count} DidRecords")
+            
+            count = 0
             for record in connection_records:
+                record["encoded_value"] = orjson.dumps(record["value"])
+            for record in connection_records:
+                count += 1
                 await txn.insert(
                     category="ConnectionRecord",
                     name=record["name"],
-                    value=json.dumps(record["value"]).encode("utf-8"),
+                    value=record["encoded_value"],
                     tags=record["tags"],
                 )
-                print(
-                    f"ConnectionRecord {record['name']} successfully inserted into wallet."
-                )
-
+            print(
+                f"converted {count} ConnectionRecords"
+            )
+            
+            count = 0
             for record in legacy_oob_records:
+                record["encoded_value"] = orjson.dumps(record["value"])
+            for record in legacy_oob_records:
+                count += 1
                 await txn.insert(
                     category="OutOfBandRecord",
                     name=record["name"],
-                    value=json.dumps(record["value"]).encode("utf-8"),
+                    value=record["encoded_value"],
                     tags=record["tags"],
                 )
-                print(
-                    f"OutOfBandRecord {record['name']} successfully inserted into wallet."
-                )
+            print(
+                f"converted {count} OutOfBandRecords"
+            )
 
             # Insert the storage version record
             await txn.insert(
                 category="StorageVersionRecord",
                 name="STORAGE_VERSION_RECORD_ID",
-                value=json.dumps(
+                value=orjson.dumps(
                     {
-                        "createdAt": datetime.now().isoformat(timespec='milliseconds') + "Z",
-                        "updatedAt": datetime.now().isoformat(timespec='milliseconds') + "Z",
+                        "createdAt": self.now,
+                        "updatedAt": self.now,
                         "storageVersion": "0.5",
                         "_tags": {},
                         "metadata": {},
                     }
-                ).encode("utf-8"),
+                ),
                 tags={},
             )
 
@@ -556,6 +583,9 @@ class MediatorConverter:
         print("Set profile to 'mediator'")
         await store.close()
         await self.conn.close()
+        print(
+            f"Conversion completed in {datetime.now() - start_time} seconds."
+        )
 
     async def run(self):
         """Run the converter."""
