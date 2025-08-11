@@ -4,6 +4,7 @@ import hashlib
 import uuid
 from datetime import datetime
 from json import JSONDecodeError
+from typing import Tuple
 
 import base58
 import multibase
@@ -271,13 +272,20 @@ class MediatorConverter:
         }
 
     async def _convert_connection_to_connection_record(
-        self, entry: dict, my_did: dict, their_did: dict
-    ) -> dict:
+        self, entry: dict, my_did: dict | None, their_did: dict | None, oob_id: str | None
+    ) -> Tuple[dict, dict | None, dict | None]:
         """Convert AcaPy connection record to Credo ConnectionRecord."""
         conn = entry["value"]
         conn_id = entry["name"]
-        my_did_record = await self._convert_did_to_legacy_did_record(my_did, "created")
-        their_did_record = await self._convert_did_to_legacy_did_record(their_did, "received")
+        my_did_record = None
+        their_did_record = None
+        if my_did:
+            my_did_record = await self._convert_did_to_legacy_did_record(my_did, "created")
+            my_did = my_did_record["value"].get("did")
+        if their_did:
+            their_did_record = await self._convert_did_to_legacy_did_record(their_did, "received")
+            their_did = their_did_record["value"].get("did")
+            
         their_label = conn.get("their_label", "Unknown")
         state = conn["state"]
         created_at = self._truncate_to_milliseconds(conn.get("created_at") or self.now)
@@ -287,18 +295,14 @@ class MediatorConverter:
         # AcaPy 'active' maps to Credo 'completed'
         credo_state = "completed" if state == "active" else state
         auto_accept = conn.get("auto_accept", False) == "true"
-        my_did = my_did_record["value"].get("did")
-        their_did = their_did_record["value"].get("did")
-        return (
-            {
+
+        connection_record = {
                 "name": conn_id,
                 "value": {
                     "id": conn_id,
                     "role": "responder",
                     "state": credo_state,
                     "protocol": "https://didcomm.org/connections/1.0",
-                    "did": my_did,
-                    "theirDid": their_did,
                     "theirLabel": their_label,
                     "threadId": thread_id,
                     "createdAt": created_at,
@@ -307,8 +311,6 @@ class MediatorConverter:
                     "_tags": {
                         "role": "responder",
                         "state": credo_state,
-                        "did": my_did,
-                        "theirDid": their_did,
                     },
                     "metadata": {
                         "_internal/useDidKeysForProtocol": {
@@ -322,10 +324,25 @@ class MediatorConverter:
                 "tags": {
                     "role": "responder",
                     "state": credo_state,
-                    "did": my_did,
-                    "theirDid": their_did,
                 },
-            },
+            }
+        if my_did:
+            connection_record["value"]["did"] = my_did
+            connection_record["tags"]["did"] = my_did
+            connection_record["value"]["_tags"]["did"] = my_did
+            
+        if their_did:
+            connection_record["value"]["theirDid"] = their_did
+            connection_record["tags"]["theirDid"] = their_did
+            connection_record["value"]["_tags"]["theirDid"] = their_did
+
+        if oob_id:
+            connection_record["value"]["outOfBandId"] = oob_id
+            connection_record["tags"]["outOfBandId"] = oob_id
+            connection_record["value"]["_tags"]["outOfBandId"] = oob_id
+            
+        return (
+            connection_record,
             my_did_record,
             their_did_record,
         )
@@ -434,42 +451,40 @@ class MediatorConverter:
             for d in items.get("did_key", [])
         }
 
-        for entry_connection in items.get("connection", []):
-            my_did, their_did = None, None
-            # Multiuse invitation connections may not have DIDs
-            if (
-                entry_connection["value"].get("my_did") is None
-                or entry_connection["value"].get("their_did") is None
-            ):
-                continue
+        print("Converting connection invitations to legacy OOB records...")
+        legacy_oob_records = []
+        oob_id_by_invitation_key = {}
+        for invite in items.get("connection_invitation", []):
+            legacy_oob_record = self._convert_connection_invitation_to_legacy_oob_record(
+                invite
+            )
+            legacy_oob_records.append(legacy_oob_record)
+            # This is for the outOfBandId in the ConnectionsRecord
+            if invite.get("tags", {}).get("connection_id"):
+                oob_id_by_invitation_key[invite["value"]["recipientKeys"][0]] = legacy_oob_record["name"]
+            
+
+        for entry_connection in items.get("connection", []):            
             my_did = did_by_name.get(entry_connection["value"].get("my_did"))
             their_did = did_key_by_did.get(entry_connection["value"].get("their_did"))
             
-            if not my_did or not their_did:
-                continue
+            oob_id = oob_id_by_invitation_key.get(entry_connection["value"]["invitation_key"])
             
             (
                 connection_record,
                 my_did_record,
                 their_did_record,
             ) = await self._convert_connection_to_connection_record(
-                entry_connection, my_did, their_did
+                entry_connection, my_did, their_did, oob_id
             )
             connection_records.append(connection_record)
-            did_records.append(my_did_record)
-            did_records.append(their_did_record)
-
-        print("Converting connection invitations to legacy OOB records...")
-        legacy_oob_records = []
-        for invite in items.get("connection_invitation", []):
-            legacy_oob_record = self._convert_connection_invitation_to_legacy_oob_record(
-                invite
-            )
-            legacy_oob_records.append(legacy_oob_record)
+            if my_did_record:
+                did_records.append(my_did_record)
+            if their_did_record:
+                did_records.append(their_did_record)
 
         async with store.transaction() as txn:
             count = 0
-            
             for record in mediation_records:
                 record["encoded_value"] = orjson.dumps(record["value"])
             for record in mediation_records:
