@@ -589,13 +589,10 @@ class MediatorConverter:
             await txn.commit()
         current_name = await store.get_default_profile()
         print(f"acapy current profile name is {current_name}")
-        # 'mediator' is the hardcoded name for the Credo mediator profile
-        # if the credo mediator wallet name is required to be different,
-        # this should be passed as an argument to the constructor
-        await store.rename_profile(current_name, "mediator")
-        print("Renamed profile to 'mediator'.")
-        await store.set_default_profile("mediator")
-        print("Set profile to 'mediator'")
+        await store.rename_profile(current_name, self.wallet_name)
+        print(f"Renamed profile to '{self.wallet_name}'.")
+        await store.set_default_profile(self.wallet_name)
+        print(f"Set profile to '{self.wallet_name}'")
         await store.close()
         await self.conn.close()
         print(
