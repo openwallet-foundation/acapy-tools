@@ -27,7 +27,7 @@ base58 = "~=1.0"
 cbor2 = "~=5.2"
 msgpack = "~=1.0"
 PyNaCl = "~=1.4"
-pydantic = "^2.8.2"
+pydantic = "^2.11.7"
 py-multibase = "^1.0.3"
 orjson = "^3.11.1"
 
