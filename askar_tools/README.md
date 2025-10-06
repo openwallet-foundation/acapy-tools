@@ -72,3 +72,19 @@ poetry install
     --tenant-extra-settings <optional: default is None> \
     --tenant-dispatch-type <optional: default is None>
     ```
+    
+### Convert from acapy mediator to credo mediator:
+
+ * Converts an acapy mediator records to a credo mediator records.
+ * The acapy mediator wallet records will be deleted after the conversion.
+ * The credo mediator wallet will be created in the same database as the acapy mediator wallet.
+ * Only the default derivation method is supported.
+- `mediator-convert` (Convert from acapy mediator to credo mediator):
+
+     ```
+    poetry run askar-tools \
+    --strategy mediator-convert \
+    --uri postgres://<username>:<password>@<hostname>:<port>/<dbname> \
+    --wallet-name <base wallet name> \
+    --wallet-key <base wallet key> 
+    ```
