@@ -72,7 +72,7 @@ poetry install
     --tenant-extra-settings <optional: default is None> \
     --tenant-dispatch-type <optional: default is None>
     ```
-W
+    
 ### Convert from acapy mediator to credo mediator:
 
  * Converts an acapy mediator records to a credo mediator records.
