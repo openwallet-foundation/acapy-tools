@@ -1,5 +1,5 @@
-name: Publish ACA-Py-Wallet-Upgrade Image
-run-name: Publish ACA-Py-Wallet-Upgrade ${{ inputs.tag || github.event.release.tag_name }} Image
+name: Publish Aca-Py Tools Image
+run-name: Publish Aca-Py Tools ${{ inputs.tag || github.event.release.tag_name }} Image
 on:
   release:
     types: [published]
@@ -58,7 +58,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ghcr.io/${{ steps.info.outputs.repo-owner }}/aries-acapy-wallet-upgrade
+            ghcr.io/${{ steps.info.outputs.repo-owner }}/aries-acapy-tools
           tags: |
             type=raw,value=py${{ matrix.python-version }}-${{ inputs.tag || github.event.release.tag_name }}
 
