@@ -18,11 +18,10 @@ RUN poetry config virtualenvs.in-project true
 COPY pyproject.toml poetry.lock README.md ./
 COPY acapy_wallet_upgrade/ acapy_wallet_upgrade/
 COPY askar_tools/ askar_tools/
-COPY tests/ tests/
 RUN poetry build
 
 
-FROM --platform=linux/amd64 python:${python_version}-slim AS askar-upgrade
+FROM --platform=linux/amd64 python:${python_version}-slim AS askar-tools
 COPY --from=base /usr/src/app/dist/askar_tools-*-py3-none-any.whl /tmp/.
 
 RUN pip install /tmp/askar_tools-*-py3-none-any.whl && \
