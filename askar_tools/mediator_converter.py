@@ -32,6 +32,7 @@ class MediatorConverter:
             conn: The connection object.
             wallet_name: The name of the wallet.
             wallet_key: The key for the wallet.
+
         """
         self.conn = conn
         self.wallet_name = wallet_name
@@ -58,7 +59,6 @@ class MediatorConverter:
         """Generate a did:peer using NumAlgo 1 from a DID Document (must be deterministic).
         Equivalent to Credo TS's DidPeer.fromDidDocument.
         """  # noqa: D205
-
         # SHA-256 hash of canonical JSON
         digest = hashlib.sha256(canonical_doc).digest()
         
@@ -580,7 +580,10 @@ class MediatorConverter:
                 "did_key",
                 "did",
                 "forward_route",
+                "master_secret",
                 "mediation_requests",
+                "push_notification_record",
+                "pres_ex_v20",
                 "routing_did",
             ]:
                 await txn.remove_all(category=category)
