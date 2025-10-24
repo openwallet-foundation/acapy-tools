@@ -433,20 +433,20 @@ class MediatorConverter:
         mediation_record_map = {}
         for entry_route in items.get("forward_route", []):
             connection_id = entry_route["value"]["connection_id"]
-            if not mediation_record_map.get(connection_id):
+            mediation_record = mediation_record_map.get(connection_id)
+            if not mediation_record:
                 mediation_record = self._convert_forward_route_to_mediation_record(
                     entry_route, connection_id
                 )
                 mediation_record_map[connection_id] = mediation_record
             else:
-                mediation_record_map.get(connection_id)["value"]["recipientKeys"].append(
+                mediation_record["value"]["recipientKeys"].append(
                     entry_route["value"]["recipient_key"]
                 )
                 recipient_key = entry_route["value"]["recipient_key"]
-                mediation_record_map.get(connection_id)["tags"][
+                mediation_record["tags"][
                     f"recipientKeys:{recipient_key}"
                 ] = "1"
-                
         
         mediation_records = list(mediation_record_map.values())
 
