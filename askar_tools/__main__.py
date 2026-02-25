@@ -7,15 +7,14 @@ import sys
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+from askar_tools.credo_mediator_clean_up import CredoMediatorCleanUp
+from askar_tools.error import InvalidArgumentsError
 from askar_tools.exporter import Exporter
 from askar_tools.mediator_converter import MediatorConverter
 from askar_tools.multi_wallet_converter import MultiWalletConverter
 from askar_tools.pg_connection import PgConnection
 from askar_tools.sqlite_connection import SqliteConnection
 from askar_tools.tenant_importer import TenantImporter, TenantImportObject
-
-from .credo_mediator_clean_up import CredoMediatorCleanUp
-from .error import InvalidArgumentsError
 
 
 def config():
@@ -259,9 +258,9 @@ async def main(args):
             conn=conn,
             wallet_name=args.wallet_name,
             wallet_key=args.wallet_key,
+            cron_job_start_time=datetime.fromisoformat(args.cron_job_start_time) if args.cron_job_start_time else datetime.now(timezone.utc),
             wallet_key_derivation_method=args.wallet_key_derivation_method,
             inactive_days_threshold=args.inactive_days_threshold,
-            cron_job_start_time=datetime.fromisoformat(args.cron_job_start_time) if args.cron_job_start_time else datetime.now(timezone.utc),
             cron_job_interval_days=args.cron_job_interval_days,
         )
     else:

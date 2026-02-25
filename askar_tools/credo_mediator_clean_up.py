@@ -1,4 +1,4 @@
-"""This module contains the Exporter class."""
+"""This module contains the CredoMediatorCleanUp class."""
 
 
 import asyncio
@@ -19,9 +19,9 @@ class CredoMediatorCleanUp:
         conn: SqliteConnection | PgConnection,
         wallet_name: str,
         wallet_key: str,
+        cron_job_start_time: datetime,
         wallet_key_derivation_method: str = "ARGON2I_MOD",
         inactive_days_threshold: int = 365,
-        cron_job_start_time: datetime = datetime.now(timezone.utc),
         cron_job_interval_days: int = 7,
     ):
         """Initialize the CredoMediatorCleanUp object.
@@ -66,17 +66,15 @@ class CredoMediatorCleanUp:
                     try:
                         last_seen_time = connection_record.value_json.get("tags", {}).get("lastSeen")
                         
-                        if last_seen_time is None:
+                        if last_seen_time is None and now - self.cron_job_start_time > timedelta(days=self.inactive_days_threshold):
                             last_seen_time = connection_record.value_json.get("updatedAt")
                         
-                        
-                        if now - datetime.fromisoformat(last_seen_time.replace("Z", "+00:00")) > timedelta(days=self.inactive_days_threshold):
+                        if last_seen_time and now - datetime.fromisoformat(last_seen_time.replace("Z", "+00:00")) > timedelta(days=self.inactive_days_threshold):
                             their_did = connection_record.value_json.get("theirDid")
                             their_did_record = None
                             did = connection_record.value_json.get("did")
                             did_record = None
                             
-                            print(f"Deleting connection record with id {connection_record.name} last seen at {last_seen_time}")
                             await txn.remove("ConnectionRecord", connection_record.name)
                             if their_did:
                                 their_did_record = await txn.fetch_all("DidRecord", tag_filter={"did": their_did}, limit=1)
@@ -93,12 +91,12 @@ class CredoMediatorCleanUp:
                                 await txn.remove("MediationRecord", mediation_record[0].name)
                             if firebase_record:
                                 await txn.remove("PushNotificationsFcmRecord", firebase_record[0].name)
-                            print(f"Deleted connection record with id {connection_record.name} and associated records")
                             deleted += 1
-                            await txn.commit()
+                            print(f"Deleted connection record with id {connection_record.name} last seen at {last_seen_time} and associated records")
                     except Exception as e:
                         print(f"Error processing connection record with id {connection_record.name}: {e}")
                         await txn.rollback()
+                    await txn.commit()
                         
         print(f"Cleanup complete. Deleted {deleted} connection and related records.")
         await store.close()
@@ -117,5 +115,11 @@ class CredoMediatorCleanUp:
             print(f"Starting cleanup at {datetime.now(timezone.utc).isoformat()}")
             await self.cleanup()
             next_run += timedelta(days=self.cron_job_interval_days)
+            delay = (next_run - datetime.now(timezone.utc)).total_seconds()
             print(f"Next cleanup scheduled at {next_run.isoformat()}")
-            await asyncio.sleep((next_run - datetime.now(timezone.utc)).total_seconds())
+            
+            # This is for an edge case where the cleanup takes a long time and we are already past the next scheduled run time. 
+            # In that case, we want to run the cleanup immediately again instead of waiting for the interval duration. 
+            # This will never happen with a properly configured cron job interval and cleanup duration, but it's good to have this safeguard in place.
+            if delay > 0:
+                await asyncio.sleep(delay)
