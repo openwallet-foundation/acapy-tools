@@ -88,3 +88,21 @@ poetry install
     --wallet-name <base wallet name> \
     --wallet-key <base wallet key> 
     ```
+
+### Credo Mediator Clean Up:
+
+ * This tool is designed to run as a cron job to clean up old records from the credo mediator wallet.
+ * The tool will delete records that are older than the specified number of days.
+ * The tool will run indefinitely until it is stopped.
+ * The tool will wait until the specified start time before starting the first cleanup.
+- `credo-mediator-clean-up` (Clean up old records from the credo mediator wallet):
+    ```
+    poetry run askar-tools \
+    --strategy credo-mediator-clean-up \
+    --uri postgres://<username>:<password>@<hostname>:<port>/<dbname> \
+    --wallet-name <base wallet name> \
+    --wallet-key <base wallet key> \
+    --inactive-days-threshold <number of days after which a connection is considered inactive> \
+    --cron-job-start-time <optional: start time for the cron job in ISO format, default is now> \
+    --cron-job-interval-days <optional: number of days between each cleanup, default is 7>
+    ```
