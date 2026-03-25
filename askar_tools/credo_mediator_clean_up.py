@@ -4,6 +4,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import asyncpg
 from aries_askar import Store
 
 from .key_methods import KEY_METHODS
@@ -17,6 +18,7 @@ class CredoMediatorCleanUp:
     def __init__(
         self,
         conn: SqliteConnection | PgConnection,
+        pickup_repo_conn: PgConnection,
         wallet_name: str,
         wallet_key: str,
         cron_job_start_time: datetime,
@@ -36,6 +38,7 @@ class CredoMediatorCleanUp:
             cron_job_interval_days: The interval in days between cron job executions.
         """
         self.conn = conn
+        self.pickup_repo_conn = pickup_repo_conn
         self.wallet_name = wallet_name
         self.wallet_key = wallet_key
         self.wallet_key_derivation_method = wallet_key_derivation_method
@@ -55,48 +58,62 @@ class CredoMediatorCleanUp:
             key_method=KEY_METHODS.get(self.wallet_key_derivation_method),
         )
         
+        db_conn = await asyncpg.connect(
+            host=self.pickup_repo_conn.parsed_url.hostname,
+            port=self.pickup_repo_conn.parsed_url.port or 5432,
+            user=self.pickup_repo_conn.parsed_url.username,
+            password=self.pickup_repo_conn.parsed_url.password,
+            database=self.pickup_repo_conn.parsed_url.path.lstrip("/"),
+            )
+        
+        connections_with_queued_messages = await db_conn.fetch("SELECT DISTINCT connection_id FROM queued_message")
+        
+        connections_with_queued_messages = {str(record["connection_id"]) for record in connections_with_queued_messages} 
+                
         async with store.transaction() as session:
             connection_records = await session.fetch_all("ConnectionRecord")
             
         deleted = 0
         for connection_record in connection_records:
-            used_for_mediation = connection_record.value_json.get("metadata", {}).get("_internal/useDidKeysForProtocol", {}).get("https://didcomm.org/coordinate-mediation/1.0", False)
-            if used_for_mediation:
-                async with store.transaction() as txn:
-                    try:
-                        last_seen_time = connection_record.value_json.get("tags", {}).get("lastSeen")
+            async with store.transaction() as txn:
+                try:
+                    if connection_record.name in connections_with_queued_messages:
+                        print(f"Skipping connection record with id {connection_record.name} because it has queued messages")
+                        continue
+                    
+                    last_seen_time = connection_record.value_json.get("tags", {}).get("lastSeen")
+                    
+                    if last_seen_time is None and now - self.cron_job_start_time > timedelta(days=self.inactive_days_threshold):
+                        last_seen_time = connection_record.value_json.get("updatedAt")
+                    
+                    if last_seen_time and now - datetime.fromisoformat(last_seen_time.replace("Z", "+00:00")) > timedelta(days=self.inactive_days_threshold):
+                        their_did = connection_record.value_json.get("theirDid")
+                        their_did_record = None
+                        did = connection_record.value_json.get("did")
+                        did_record = None
                         
-                        if last_seen_time is None and now - self.cron_job_start_time > timedelta(days=self.inactive_days_threshold):
-                            last_seen_time = connection_record.value_json.get("updatedAt")
-                        
-                        if last_seen_time and now - datetime.fromisoformat(last_seen_time.replace("Z", "+00:00")) > timedelta(days=self.inactive_days_threshold):
-                            their_did = connection_record.value_json.get("theirDid")
-                            their_did_record = None
-                            did = connection_record.value_json.get("did")
-                            did_record = None
+                        await txn.remove("ConnectionRecord", connection_record.name)
+                        if their_did:
+                            their_did_record = await txn.fetch_all("DidRecord", tag_filter={"did": their_did}, limit=1)
                             
-                            await txn.remove("ConnectionRecord", connection_record.name)
-                            if their_did:
-                                their_did_record = await txn.fetch_all("DidRecord", tag_filter={"did": their_did}, limit=1)
-                                
-                            if did:
-                                did_record = await txn.fetch_all("DidRecord", tag_filter={"did": did}, limit=1)
-                            mediation_record = await txn.fetch_all("MediationRecord", tag_filter={"connectionId": connection_record.name}, limit=1)
-                            firebase_record = await txn.fetch_all("PushNotificationsFcmRecord", tag_filter={"connectionId": connection_record.name}, limit=1)
-                            if their_did_record:
-                                await txn.remove("DidRecord", their_did_record[0].name)
-                            if did_record:
-                                await txn.remove("DidRecord", did_record[0].name)
-                            if mediation_record:
-                                await txn.remove("MediationRecord", mediation_record[0].name)
-                            if firebase_record:
-                                await txn.remove("PushNotificationsFcmRecord", firebase_record[0].name)
-                            deleted += 1
-                            print(f"Deleted connection record with id {connection_record.name} last seen at {last_seen_time} and associated records")
-                    except Exception as e:
-                        print(f"Error processing connection record with id {connection_record.name}: {e}")
-                        await txn.rollback()
-                    await txn.commit()
+                        if did:
+                            did_record = await txn.fetch_all("DidRecord", tag_filter={"did": did}, limit=1)
+                        mediation_record = await txn.fetch_all("MediationRecord", tag_filter={"connectionId": connection_record.name}, limit=1)
+                        firebase_record = await txn.fetch_all("PushNotificationsFcmRecord", tag_filter={"connectionId": connection_record.name}, limit=1)
+                        if their_did_record:
+                            await txn.remove("DidRecord", their_did_record[0].name)
+                        if did_record:
+                            await txn.remove("DidRecord", did_record[0].name)
+                        if mediation_record:
+                            await txn.remove("MediationRecord", mediation_record[0].name)
+                        if firebase_record:
+                            await txn.remove("PushNotificationsFcmRecord", firebase_record[0].name)
+                        deleted += 1
+                        print(f"Deleted connection record with id {connection_record.name} last seen at {last_seen_time} and associated records")
+                except Exception as e:
+                    print(f"Error processing connection record with id {connection_record.name}: {e}")
+                    await txn.rollback()
+                await txn.commit()
                         
         print(f"Cleanup complete. Deleted {deleted} connection and related records.")
         await store.close()

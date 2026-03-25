@@ -169,6 +169,11 @@ def config():
         ),
         default=7,
     )
+    parser.add_argument(
+        "--pickup-repository-uri",
+        type=str,
+        help=("Specify the URI of the pickup repository for the mediator cleanup strategy."),
+    )
 
     args, _ = parser.parse_known_args(sys.argv[1:])
 
@@ -253,9 +258,14 @@ async def main(args):
             wallet_key=args.wallet_key,
         )
     elif args.strategy == "mediator-cleanup":
+        if not args.pickup_repository_uri:
+            raise ValueError("--pickup-repository-uri is required for mediator-cleanup strategy")
+        pickup_repo_conn = PgConnection(args.pickup_repository_uri)
+        await pickup_repo_conn.connect()
         await conn.connect()
         method = CredoMediatorCleanUp(
             conn=conn,
+            pickup_repo_conn=pickup_repo_conn,
             wallet_name=args.wallet_name,
             wallet_key=args.wallet_key,
             cron_job_start_time=datetime.fromisoformat(args.cron_job_start_time) if args.cron_job_start_time else datetime.now(timezone.utc),
