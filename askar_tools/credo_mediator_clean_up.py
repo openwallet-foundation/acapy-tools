@@ -12,6 +12,39 @@ from .pg_connection import PgConnection
 from .sqlite_connection import SqliteConnection
 
 
+def parse_iso_datetime(value: str) -> datetime:
+    """Parse an ISO datetime string and ensure the result is timezone-aware."""
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(normalized)
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed
+
+
+def get_connection_activity_time(
+    connection_value: dict, connection_tags: dict | None = None
+) -> datetime | None:
+    """Return the best available timestamp for connection staleness checks."""
+    last_seen_time = (connection_tags or {}).get("lastSeen")
+    if not last_seen_time:
+        last_seen_time = connection_value.get("_tags", {}).get("lastSeen")
+
+    if last_seen_time:
+        return parse_iso_datetime(last_seen_time)
+
+    updated_at = connection_value.get("updatedAt")
+    if updated_at:
+        return parse_iso_datetime(updated_at)
+
+    created_at = connection_value.get("createdAt")
+    if created_at:
+        return parse_iso_datetime(created_at)
+
+    return None
+
+
 class CredoMediatorCleanUp:
     """The CredoMediatorCleanUp class."""
 
@@ -80,13 +113,12 @@ class CredoMediatorCleanUp:
                     if connection_record.name in connections_with_queued_messages:
                         print(f"Skipping connection record with id {connection_record.name} because it has queued messages")
                         continue
-                    
-                    last_seen_time = connection_record.value_json.get("tags", {}).get("lastSeen")
-                    
-                    if last_seen_time is None and now - self.cron_job_start_time > timedelta(days=self.inactive_days_threshold):
-                        last_seen_time = connection_record.value_json.get("updatedAt")
-                    
-                    if last_seen_time and now - datetime.fromisoformat(last_seen_time.replace("Z", "+00:00")) > timedelta(days=self.inactive_days_threshold):
+
+                    activity_time = get_connection_activity_time(
+                        connection_record.value_json, connection_record.tags
+                    )
+
+                    if activity_time and now - activity_time > timedelta(days=self.inactive_days_threshold):
                         their_did = connection_record.value_json.get("theirDid")
                         their_did_record = None
                         did = connection_record.value_json.get("did")
@@ -109,11 +141,14 @@ class CredoMediatorCleanUp:
                         if firebase_record:
                             await txn.remove("PushNotificationsFcmRecord", firebase_record[0].name)
                         deleted += 1
-                        print(f"Deleted connection record with id {connection_record.name} last seen at {last_seen_time} and associated records")
+                        print(
+                            f"Deleted connection record with id {connection_record.name} "
+                            f"last active at {activity_time.isoformat()} and associated records"
+                        )
+                    await txn.commit()
                 except Exception as e:
                     print(f"Error processing connection record with id {connection_record.name}: {e}")
                     await txn.rollback()
-                await txn.commit()
                         
         print(f"Cleanup complete. Deleted {deleted} connection and related records.")
         await store.close()

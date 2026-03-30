@@ -17,6 +17,17 @@ from askar_tools.sqlite_connection import SqliteConnection
 from askar_tools.tenant_importer import TenantImporter, TenantImportObject
 
 
+def parse_iso_datetime(value: str) -> datetime:
+    """Parse an ISO datetime string and ensure the result is timezone-aware."""
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(normalized)
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed
+
+
 def config():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser("askar-wallet-tools")
@@ -261,14 +272,15 @@ async def main(args):
         if not args.pickup_repository_uri:
             raise ValueError("--pickup-repository-uri is required for mediator-cleanup strategy")
         pickup_repo_conn = PgConnection(args.pickup_repository_uri)
-        await pickup_repo_conn.connect()
         await conn.connect()
         method = CredoMediatorCleanUp(
             conn=conn,
             pickup_repo_conn=pickup_repo_conn,
             wallet_name=args.wallet_name,
             wallet_key=args.wallet_key,
-            cron_job_start_time=datetime.fromisoformat(args.cron_job_start_time) if args.cron_job_start_time else datetime.now(timezone.utc),
+            cron_job_start_time=parse_iso_datetime(args.cron_job_start_time)
+            if args.cron_job_start_time
+            else datetime.now(timezone.utc),
             wallet_key_derivation_method=args.wallet_key_derivation_method,
             inactive_days_threshold=args.inactive_days_threshold,
             cron_job_interval_days=args.cron_job_interval_days,
