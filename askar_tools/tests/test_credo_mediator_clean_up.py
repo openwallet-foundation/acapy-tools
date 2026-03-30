@@ -66,6 +66,18 @@ class FakeStore:
         self.closed = True
 
 
+class StopScheduler(Exception):
+    pass
+
+
+class FakeDateTime:
+    values = iter(())
+
+    @classmethod
+    def now(cls, tz=None):
+        return next(cls.values)
+
+
 def test_get_connection_activity_time_prefers_last_seen():
     activity_time = get_connection_activity_time(
         {
@@ -258,3 +270,71 @@ async def test_cleanup_keeps_connection_without_activity_timestamp(monkeypatch):
     assert txn.committed is True
     assert store.closed is True
     conn.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_waits_until_start_then_sleeps_until_next_run(monkeypatch):
+    start_time = datetime(2026, 1, 1, 0, 2, tzinfo=timezone.utc)
+    FakeDateTime.values = iter(
+        [
+            datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+            start_time,
+            start_time,
+            datetime(2026, 1, 1, 0, 2, 30, tzinfo=timezone.utc),
+            datetime(2026, 1, 1, 0, 2, 30, tzinfo=timezone.utc),
+        ]
+    )
+    sleep_mock = AsyncMock()
+    cleanup_mock = AsyncMock(side_effect=[None, StopScheduler()])
+    cleanup = CredoMediatorCleanUp(
+        conn=SimpleNamespace(),
+        pickup_repo_conn=SimpleNamespace(),
+        wallet_name="wallet",
+        wallet_key="key",
+        cron_job_start_time=start_time,
+        cron_job_interval_days=1,
+    )
+    cleanup.cleanup = cleanup_mock
+
+    monkeypatch.setattr(cleanup_module, "datetime", FakeDateTime)
+    monkeypatch.setattr(cleanup_module.asyncio, "sleep", sleep_mock)
+
+    with pytest.raises(StopScheduler):
+        await cleanup.run()
+
+    assert cleanup_mock.await_count == 2
+    assert sleep_mock.await_args_list == [((60,), {}), ((60,), {}), ((86370.0,), {})]
+
+
+@pytest.mark.asyncio
+async def test_run_reruns_immediately_when_cleanup_overruns_interval(monkeypatch):
+    start_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+    FakeDateTime.values = iter(
+        [
+            start_time,
+            start_time,
+            datetime(2026, 1, 2, 0, 0, 1, tzinfo=timezone.utc),
+            datetime(2026, 1, 2, 0, 0, 1, tzinfo=timezone.utc),
+        ]
+    )
+    sleep_mock = AsyncMock()
+    cleanup_mock = AsyncMock(side_effect=[None, StopScheduler()])
+    cleanup = CredoMediatorCleanUp(
+        conn=SimpleNamespace(),
+        pickup_repo_conn=SimpleNamespace(),
+        wallet_name="wallet",
+        wallet_key="key",
+        cron_job_start_time=start_time,
+        cron_job_interval_days=1,
+    )
+    cleanup.cleanup = cleanup_mock
+
+    monkeypatch.setattr(cleanup_module, "datetime", FakeDateTime)
+    monkeypatch.setattr(cleanup_module.asyncio, "sleep", sleep_mock)
+
+    with pytest.raises(StopScheduler):
+        await cleanup.run()
+
+    assert cleanup_mock.await_count == 2
+    sleep_mock.assert_not_awaited()
