@@ -98,6 +98,7 @@ class CredoMediatorCleanUp:
             password=self.pickup_repo_conn.parsed_url.password,
             database=self.pickup_repo_conn.parsed_url.path.lstrip("/"),
             )
+        await self.conn.connect()
         
         connections_with_queued_messages = await db_conn.fetch("SELECT DISTINCT connection_id FROM queued_message")
         

@@ -154,7 +154,7 @@ async def test_cleanup_deletes_stale_connection_and_related_records(monkeypatch)
     )
     store = FakeStore([connection_record], [FakeSession([connection_record]), txn])
     db_conn = SimpleNamespace(fetch=AsyncMock(return_value=[]))
-    conn = SimpleNamespace(uri="sqlite:///wallet.db", close=AsyncMock())
+    conn = SimpleNamespace(uri="sqlite:///wallet.db", close=AsyncMock(), connect=AsyncMock())
     pickup_repo_conn = SimpleNamespace(
         parsed_url=SimpleNamespace(
             hostname="localhost",
@@ -203,7 +203,7 @@ async def test_cleanup_skips_queued_connections(monkeypatch):
     db_conn = SimpleNamespace(
         fetch=AsyncMock(return_value=[{"connection_id": "conn-queued"}])
     )
-    conn = SimpleNamespace(uri="sqlite:///wallet.db", close=AsyncMock())
+    conn = SimpleNamespace(uri="sqlite:///wallet.db", close=AsyncMock(), connect=AsyncMock())
     pickup_repo_conn = SimpleNamespace(
         parsed_url=SimpleNamespace(
             hostname="localhost",
@@ -241,7 +241,7 @@ async def test_cleanup_keeps_connection_without_activity_timestamp(monkeypatch):
     txn = FakeTxn()
     store = FakeStore([connection_record], [FakeSession([connection_record]), txn])
     db_conn = SimpleNamespace(fetch=AsyncMock(return_value=[]))
-    conn = SimpleNamespace(uri="sqlite:///wallet.db", close=AsyncMock())
+    conn = SimpleNamespace(uri="sqlite:///wallet.db", close=AsyncMock(), connect=AsyncMock())
     pickup_repo_conn = SimpleNamespace(
         parsed_url=SimpleNamespace(
             hostname="localhost",
