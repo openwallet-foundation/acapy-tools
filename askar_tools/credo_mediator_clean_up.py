@@ -23,6 +23,11 @@ def parse_iso_datetime(value: str) -> datetime:
     return parsed
 
 
+def format_utc_datetime(value: datetime) -> str:
+    """Format a timezone-aware datetime as an ISO 8601 UTC string."""
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def get_connection_activity_time(
     connection_value: dict, connection_tags: dict | None = None
 ) -> datetime | None:
@@ -118,6 +123,22 @@ class CredoMediatorCleanUp:
                     activity_time = get_connection_activity_time(
                         connection_record.value_json, connection_record.tags
                     )
+
+                    if activity_time is None:
+                        connection_value = dict(connection_record.value_json)
+                        connection_value["updatedAt"] = format_utc_datetime(now)
+                        await txn.replace(
+                            "ConnectionRecord",
+                            connection_record.name,
+                            value_json=connection_value,
+                            tags=connection_record.tags,
+                        )
+                        print(
+                            f"Backfilled updatedAt for connection record with id {connection_record.name} "
+                            f"to {connection_value['updatedAt']}"
+                        )
+                        await txn.commit()
+                        continue
 
                     if activity_time and now - activity_time > timedelta(days=self.inactive_days_threshold):
                         their_did = connection_record.value_json.get("theirDid")

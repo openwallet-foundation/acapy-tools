@@ -34,6 +34,7 @@ class FakeTxn:
     def __init__(self, record_lookup=None):
         self.record_lookup = record_lookup or {}
         self.removed = []
+        self.replaced = []
         self.committed = False
         self.rolled_back = False
 
@@ -43,6 +44,18 @@ class FakeTxn:
 
     async def remove(self, category, name):
         self.removed.append((category, name))
+
+    async def replace(self, category, name, value=None, tags=None, expiry_ms=None, value_json=None):
+        self.replaced.append(
+            {
+                "category": category,
+                "name": name,
+                "value": value,
+                "tags": tags,
+                "expiry_ms": expiry_ms,
+                "value_json": value_json,
+            }
+        )
 
     async def commit(self):
         self.committed = True
@@ -85,6 +98,18 @@ def test_get_connection_activity_time_prefers_last_seen():
             "createdAt": "2026-02-01T00:00:00Z",
         },
         {"lastSeen": "2026-03-24T20:27:09.902Z"},
+    )
+
+    assert activity_time == datetime(2026, 3, 24, 20, 27, 9, 902000, tzinfo=timezone.utc)
+
+
+def test_get_connection_activity_time_accepts_non_utc_offset():
+    activity_time = get_connection_activity_time(
+        {
+            "updatedAt": "2026-03-01T00:00:00Z",
+            "createdAt": "2026-02-01T00:00:00Z",
+        },
+        {"lastSeen": "2026-03-24T22:27:09.902+02:00"},
     )
 
     assert activity_time == datetime(2026, 3, 24, 20, 27, 9, 902000, tzinfo=timezone.utc)
@@ -254,6 +279,8 @@ async def test_cleanup_keeps_connection_without_activity_timestamp(monkeypatch):
 
     monkeypatch.setattr(cleanup_module.Store, "open", AsyncMock(return_value=store))
     monkeypatch.setattr(cleanup_module.asyncpg, "connect", AsyncMock(return_value=db_conn))
+    FakeDateTime.values = iter([datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc)])
+    monkeypatch.setattr(cleanup_module, "datetime", FakeDateTime)
 
     cleanup = CredoMediatorCleanUp(
         conn=conn,
@@ -267,6 +294,16 @@ async def test_cleanup_keeps_connection_without_activity_timestamp(monkeypatch):
     await cleanup.cleanup()
 
     assert txn.removed == []
+    assert txn.replaced == [
+        {
+            "category": "ConnectionRecord",
+            "name": "conn-1",
+            "value": None,
+            "tags": {},
+            "expiry_ms": None,
+            "value_json": {"updatedAt": "2026-04-06T12:00:00Z"},
+        }
+    ]
     assert txn.committed is True
     assert store.closed is True
     conn.close.assert_awaited_once()
