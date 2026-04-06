@@ -4,8 +4,10 @@ import argparse
 import asyncio
 import logging
 import sys
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+from askar_tools.credo_mediator_clean_up import CredoMediatorCleanUp
 from askar_tools.error import InvalidArgumentsError
 from askar_tools.exporter import Exporter
 from askar_tools.mediator_converter import MediatorConverter
@@ -13,6 +15,17 @@ from askar_tools.multi_wallet_converter import MultiWalletConverter
 from askar_tools.pg_connection import PgConnection
 from askar_tools.sqlite_connection import SqliteConnection
 from askar_tools.tenant_importer import TenantImporter, TenantImportObject
+
+
+def parse_iso_datetime(value: str) -> datetime:
+    """Parse an ISO datetime string and ensure the result is timezone-aware."""
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(normalized)
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed
 
 
 def config():
@@ -23,7 +36,7 @@ def config():
     parser.add_argument(
         "--strategy",
         required=True,
-        choices=["export", "mt-convert-to-mw", "tenant-import", "mediator-convert"],
+        choices=["export", "mt-convert-to-mw", "tenant-import", "mediator-convert", "mediator-cleanup"],
         help=(
             "Specify migration strategy depending on database type, wallet "
             "management mode, and agent type."
@@ -140,6 +153,38 @@ def config():
         help=("Specify the dispatch type for the tenant wallet."),
         default="base",
     )
+    
+    parser.add_argument(
+        "--inactive-days-threshold",
+        type=int,
+        help=(
+            "Specify the number of days after which a connection is considered "
+            "inactive for the mediator cleanup strategy. Default is 365 days."
+        ),
+        default=365,
+    )
+    parser.add_argument(
+        "--cron-job-start-time",
+        type=str,
+        help=(
+            "Specify the start time for the cron job in ISO format (e.g., "
+            "2026-02-24T00:00:00Z) for the mediator cleanup strategy. Default is the current time."
+        ),
+    )
+    parser.add_argument(
+        "--cron-job-interval-days",
+        type=int,
+        help=(
+            "Specify the interval in days between cron job executions for the "
+            "mediator cleanup strategy. Default is 7 days."
+        ),
+        default=7,
+    )
+    parser.add_argument(
+        "--pickup-repository-uri",
+        type=str,
+        help=("Specify the URI of the pickup repository for the mediator cleanup strategy."),
+    )
 
     args, _ = parser.parse_known_args(sys.argv[1:])
 
@@ -222,6 +267,23 @@ async def main(args):
             conn=conn,
             wallet_name=args.wallet_name,
             wallet_key=args.wallet_key,
+        )
+    elif args.strategy == "mediator-cleanup":
+        if not args.pickup_repository_uri:
+            raise ValueError("--pickup-repository-uri is required for mediator-cleanup strategy")
+        pickup_repo_conn = PgConnection(args.pickup_repository_uri)
+        await conn.connect()
+        method = CredoMediatorCleanUp(
+            conn=conn,
+            pickup_repo_conn=pickup_repo_conn,
+            wallet_name=args.wallet_name,
+            wallet_key=args.wallet_key,
+            cron_job_start_time=parse_iso_datetime(args.cron_job_start_time)
+            if args.cron_job_start_time
+            else datetime.now(timezone.utc),
+            wallet_key_derivation_method=args.wallet_key_derivation_method,
+            inactive_days_threshold=args.inactive_days_threshold,
+            cron_job_interval_days=args.cron_job_interval_days,
         )
     else:
         raise InvalidArgumentsError("Invalid strategy")
